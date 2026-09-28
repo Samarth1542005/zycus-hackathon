@@ -1,7 +1,5 @@
-const { ProductModel, SnapshotModel, PricingSuggestionModel, ReorderSuggestionModel } = require('../../models');
+const { ProductModel, PricingSuggestionModel, ReorderSuggestionModel } = require('../../models');
 const engine = require('../engine');
-
-const DEMAND_SPIKE_THRESHOLD = 10; // Units sold per day that constitutes a spike
 
 class TriggerService {
   
@@ -13,31 +11,30 @@ class TriggerService {
     const product = ProductModel.findById(productId);
     if (!product) return;
 
-    let triggerType = null;
+    let triggerReason = null;
+    const categoryAvgVelocity = ProductModel.getCategoryAvgVelocity(product.category);
+    const demandSpikeThreshold = categoryAvgVelocity > 0 ? categoryAvgVelocity * 3 : 10;
 
-    // Check for LOW_STOCK trigger
+    // Check for INVENTORY_LOW trigger
     if (product.stock_level < product.reorder_threshold && product.stock_level > 0) {
-      triggerType = 'AUTO_LOW_STOCK';
+      triggerReason = 'INVENTORY_LOW';
     } 
     // Check for DEMAND_SPIKE trigger
-    else if (product.demand_velocity >= DEMAND_SPIKE_THRESHOLD) {
-      triggerType = 'AUTO_DEMAND_SPIKE';
+    else if (product.demand_velocity >= demandSpikeThreshold) {
+      triggerReason = 'DEMAND_SPIKE';
     }
 
-    // Always take a snapshot
-    SnapshotModel.create(product.id, product.stock_level, product.demand_velocity, triggerType);
-
     // If there's a trigger, check if we already have pending suggestions
-    if (triggerType) {
+    if (triggerReason) {
       const hasPendingPricing = PricingSuggestionModel.hasPendingForProduct(product.id);
       const hasPendingReorder = ReorderSuggestionModel.hasPendingForProduct(product.id);
       
       if (!hasPendingPricing && !hasPendingReorder) {
         ProductModel.updateStatus(product.id, 'PRICE_REVIEW_PENDING');
-        // Queue the suggestion generation
-        engine.processTrigger(product, triggerType);
+        // Queue the suggestion generation asynchronously (agentic loop)
+        engine.processTrigger(product, triggerReason);
       } else {
-        console.log(`[Trigger] ${product.sku} triggered ${triggerType}, but already has pending suggestions. Ignored.`);
+        console.log(`[Trigger] ${product.sku} triggered ${triggerReason}, but already has pending suggestions. Ignored.`);
       }
     } else if (product.stock_level <= 0) {
        ProductModel.updateStatus(product.id, 'OUT_OF_STOCK');

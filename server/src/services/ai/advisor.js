@@ -1,69 +1,109 @@
-const { callLLM } = require('./llmGateway');
+const llmGateway = require('./llmGateway');
 
-/**
- * AI Commerce Advisor
- * Generates pricing and reorder suggestions using an LLM.
- */
 class AIAdvisor {
-  constructor(apiKey, model) {
-    this.apiKey = apiKey;
-    this.model = model;
+  constructor() {
+    this.provider = process.env.LLM_PROVIDER || 'groq';
+    this.apiKey = process.env.GROQ_API_KEY; 
+    this.model = process.env.LLM_MODEL || 'llama3-8b-8192'; // Using llama3 on Groq as default
   }
 
-  async generateSuggestions({ product, triggerType }) {
-    const prompt = `
-      Product Context:
-      - ID: ${product.id}
-      - SKU: ${product.sku}
-      - Name: ${product.name}
-      - Category: ${product.category}
-      - Current Price: $${product.current_price.toFixed(2)}
-      - Current Stock: ${product.stock_level} units
-      - Reorder Threshold: ${product.reorder_threshold} units
-      - Demand Velocity: ${product.demand_velocity} units sold per day
-      - Trigger Reason: ${triggerType === 'AUTO_LOW_STOCK' ? 'Inventory dropped below reorder threshold.' : triggerType === 'AUTO_DEMAND_SPIKE' ? 'Sudden spike in demand velocity.' : 'Manual review requested.'}
+  async generateSuggestions(context) {
+    if (!this.apiKey && this.provider === 'groq') {
+      console.warn("No GROQ_API_KEY found, failing AI call intentionally to trigger fallback.");
+      return null;
+    }
 
-      Task:
-      Based on the above context, recommend a new price and a reorder quantity.
-      If the stock is very low, you might want to raise the price slightly to protect remaining inventory and reorder more.
-      If it's a demand spike, a modest price increase might capture more margin.
-      If stock is zero, we desperately need a restock.
+    const { product, triggerReason, categoryAvgVelocity } = context;
 
-      Output JSON strictly in the following format:
+    let prompt = '';
+    
+    // T-3 TWO PROMPTS implementation
+    if (triggerReason === 'INVENTORY_LOW') {
+      prompt = `
+      You are an expert retail merchandiser. The following product has critically LOW INVENTORY.
+      Product: ${product.name} (SKU: ${product.sku})
+      Category: ${product.category}
+      Current Price: $${product.current_price}
+      Stock Level: ${product.stock_level} (Reorder Threshold: ${product.reorder_threshold})
+      Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
+
+      Decide whether to INCREASE price to protect remaining inventory, DECREASE to clear it out, or HOLD.
+      Also recommend an urgent reorder quantity and lead time.
+
+      Provide ONLY a JSON object with this exact structure, no markdown formatting:
       {
-        "pricing": {
-          "suggestedPrice": 0.0,
-          "confidence": 0.0, // 0.0 to 1.0
-          "reasoning": "Explain why this price makes sense in 1-2 sentences."
-        },
-        "reorder": {
-          "suggestedQuantity": 0,
-          "confidence": 0.0, // 0.0 to 1.0
-          "reasoning": "Explain why this reorder quantity makes sense in 1-2 sentences."
-        }
-      }
-    `;
+        "suggestedPrice": number (must be > 0 and between 0.5x and 2.0x of current price),
+        "changeDirection": "INCREASE" | "DECREASE" | "HOLD",
+        "priceConfidence": number (0.0 to 1.0),
+        "priceReasoning": "string",
+        "suggestedQuantity": number (must be integer > 0),
+        "suggestedLeadTimeDays": number (must be integer > 0),
+        "reorderConfidence": number (0.0 to 1.0),
+        "reorderReasoning": "string"
+      }`;
+    } else if (triggerReason === 'DEMAND_SPIKE') {
+      prompt = `
+      You are an expert retail merchandiser. The following product is experiencing a massive DEMAND SPIKE.
+      Product: ${product.name} (SKU: ${product.sku})
+      Category: ${product.category}
+      Current Price: $${product.current_price}
+      Stock Level: ${product.stock_level} (Reorder Threshold: ${product.reorder_threshold})
+      Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
+
+      Decide how to capitalize on this spike. You should likely INCREASE the price modestly, and place a large reorder to capture momentum.
+
+      Provide ONLY a JSON object with this exact structure, no markdown formatting:
+      {
+        "suggestedPrice": number (must be > 0 and between 0.5x and 2.0x of current price),
+        "changeDirection": "INCREASE" | "DECREASE" | "HOLD",
+        "priceConfidence": number (0.0 to 1.0),
+        "priceReasoning": "string",
+        "suggestedQuantity": number (must be integer > 0),
+        "suggestedLeadTimeDays": number (must be integer > 0),
+        "reorderConfidence": number (0.0 to 1.0),
+        "reorderReasoning": "string"
+      }`;
+    } else {
+      prompt = `
+      You are an expert retail merchandiser reviewing a product.
+      Product: ${product.name} (SKU: ${product.sku})
+      Category: ${product.category}
+      Current Price: $${product.current_price}
+      Stock Level: ${product.stock_level}
+      Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
+      
+      Review the price and reorder status.
+      Provide ONLY a JSON object with this exact structure, no markdown formatting:
+      {
+        "suggestedPrice": number (must be > 0 and between 0.5x and 2.0x of current price),
+        "changeDirection": "INCREASE" | "DECREASE" | "HOLD",
+        "priceConfidence": number (0.0 to 1.0),
+        "priceReasoning": "string",
+        "suggestedQuantity": number (must be integer > 0),
+        "suggestedLeadTimeDays": number (must be integer > 0),
+        "reorderConfidence": number (0.0 to 1.0),
+        "reorderReasoning": "string"
+      }`;
+    }
 
     try {
-      const response = await callLLM(prompt, { apiKey: this.apiKey, model: this.model });
-      
-      // Validate response shape
-      if (!response.pricing || !response.reorder) {
-        throw new Error('LLM response missing pricing or reorder properties');
-      }
+      const responseText = await llmGateway.callLLM(prompt, this.provider, this.apiKey, this.model);
+      const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const result = JSON.parse(cleaned);
 
-      return {
-        suggestedPrice: response.pricing.suggestedPrice || product.current_price,
-        priceConfidence: response.pricing.confidence || 0.5,
-        priceReasoning: response.pricing.reasoning || 'AI provided no reasoning.',
-        suggestedQuantity: response.reorder.suggestedQuantity || 0,
-        reorderConfidence: response.reorder.confidence || 0.5,
-        reorderReasoning: response.reorder.reasoning || 'AI provided no reasoning.',
-      };
-    } catch (error) {
-      console.error('AIAdvisor failed to generate suggestions:', error);
-      // Fallback to rule-based if AI fails
-      return null; 
+      // Validation Step
+      if (typeof result.suggestedPrice !== 'number' || result.suggestedPrice <= 0) throw new Error("Invalid price");
+      if (result.suggestedPrice > product.current_price * 2 || result.suggestedPrice < product.current_price * 0.5) {
+        throw new Error("Price out of sane bounds (0.5x - 2.0x)");
+      }
+      
+      if (!Number.isInteger(result.suggestedQuantity) || result.suggestedQuantity <= 0) throw new Error("Invalid quantity");
+      if (!Number.isInteger(result.suggestedLeadTimeDays) || result.suggestedLeadTimeDays <= 0) throw new Error("Invalid lead time");
+
+      return result;
+    } catch (e) {
+      console.error("[AIAdvisor] Error calling LLM or parsing response:", e.message);
+      return null; // Return null to trigger Rule-Based fallback
     }
   }
 }

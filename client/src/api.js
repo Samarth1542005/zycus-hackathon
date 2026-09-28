@@ -6,8 +6,15 @@ export const getProducts = async () => {
 };
 
 export const getSuggestions = async () => {
-  const res = await fetch(`${API_BASE}/suggestions/pending`);
-  return res.json();
+  const [pricingRes, reorderRes] = await Promise.all([
+    fetch(`${API_BASE}/pricing-suggestions/pending`),
+    fetch(`${API_BASE}/reorder-suggestions/pending`)
+  ]);
+  
+  const pricing = await pricingRes.json();
+  const reorder = await reorderRes.json();
+  
+  return { pricing, reorder };
 };
 
 export const simulateOrder = async (productId, quantity = 1) => {
@@ -20,22 +27,20 @@ export const simulateOrder = async (productId, quantity = 1) => {
   return res.json();
 };
 
-export const acceptPricing = async (id) => {
-  const res = await fetch(`${API_BASE}/suggestions/pricing/${id}/accept`, { method: 'PATCH' });
+export const resolvePricing = async (id, status) => {
+  const res = await fetch(`${API_BASE}/pricing-suggestions/${id}`, { 
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
   return res.json();
 };
 
-export const rejectPricing = async (id) => {
-  const res = await fetch(`${API_BASE}/suggestions/pricing/${id}/reject`, { method: 'PATCH' });
-  return res.json();
-};
-
-export const acceptReorder = async (id) => {
-  const res = await fetch(`${API_BASE}/suggestions/reorder/${id}/accept`, { method: 'PATCH' });
-  return res.json();
-};
-
-export const rejectReorder = async (id) => {
-  const res = await fetch(`${API_BASE}/suggestions/reorder/${id}/reject`, { method: 'PATCH' });
+export const resolveReorder = async (id, status) => {
+  const res = await fetch(`${API_BASE}/reorder-suggestions/${id}`, { 
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
   return res.json();
 };

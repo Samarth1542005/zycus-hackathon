@@ -1,97 +1,120 @@
 const { AIAdvisor } = require('../ai/advisor');
-const { PricingSuggestionModel, ReorderSuggestionModel } = require('../../models');
+const { PricingSuggestionModel, ReorderSuggestionModel, ProductModel } = require('../../models');
 
 // Strategy Interface Pattern
 class PricingStrategy {
-  async execute(product, triggerType) {
+  async execute(product, triggerReason, suggestionType = 'both') {
     throw new Error('execute() must be implemented');
   }
 }
 
 class RuleBasedStrategy extends PricingStrategy {
-  async execute(product, triggerType) {
+  async execute(product, triggerReason, suggestionType = 'both') {
     let suggestedPrice = product.current_price;
-    let suggestedQuantity = 0;
+    let changeDirection = 'HOLD';
+    let suggestedQuantity = 1;
     let priceReasoning = '';
     let reorderReasoning = '';
+    
+    // T-2 Rule-Based Math Requirements
+    const categoryAvgVelocity = ProductModel.getCategoryAvgVelocity(product.category);
 
-    if (triggerType === 'AUTO_LOW_STOCK') {
-      // 10% price increase to protect stock
+    if (product.stock_level < product.reorder_threshold) {
       suggestedPrice = +(product.current_price * 1.10).toFixed(2);
-      priceReasoning = 'Rule: Automatically increase price by 10% when stock drops below threshold to manage demand.';
-      // Reorder 2x threshold
-      suggestedQuantity = product.reorder_threshold * 2;
-      reorderReasoning = 'Rule: Automatically reorder 2x the threshold amount when stock is low.';
-    } else if (triggerType === 'AUTO_DEMAND_SPIKE') {
-      // 15% price increase for high demand
-      suggestedPrice = +(product.current_price * 1.15).toFixed(2);
-      priceReasoning = 'Rule: Automatically increase price by 15% during demand spikes to maximize margin.';
-      // Reorder 3x threshold
-      suggestedQuantity = product.reorder_threshold * 3;
-      reorderReasoning = 'Rule: Automatically reorder 3x the threshold amount due to high demand velocity.';
+      changeDirection = 'INCREASE';
+      priceReasoning = 'Rule: Stock below reorder threshold. 10% price increase recommended.';
+    } else if (product.demand_velocity > categoryAvgVelocity * 2) {
+      suggestedPrice = +(product.current_price * 1.05).toFixed(2);
+      changeDirection = 'INCREASE';
+      priceReasoning = 'Rule: Demand velocity > 2x category average. 5% price increase recommended.';
     } else {
-      suggestedQuantity = product.reorder_threshold;
       priceReasoning = 'Rule: No significant triggers, maintaining price.';
-      reorderReasoning = 'Rule: Standard manual reorder.';
     }
 
-    // Save to DB
-    PricingSuggestionModel.create({
-      productId: product.id,
-      currentPrice: product.current_price,
-      suggestedPrice,
-      confidence: 0.8,
-      reasoning: priceReasoning,
-      triggerType,
-      strategyUsed: 'rule-based'
-    });
+    // T-2 Reorder Rule: (threshold * 3) - current stock, minimum 1
+    const calcQty = (product.reorder_threshold * 3) - product.stock_level;
+    suggestedQuantity = Math.max(1, calcQty);
+    reorderReasoning = `Rule: Reorder quantity calculated as (threshold * 3) - current (${product.reorder_threshold * 3} - ${product.stock_level}).`;
 
-    ReorderSuggestionModel.create({
-      productId: product.id,
-      currentStock: product.stock_level,
-      suggestedQuantity,
-      confidence: 0.8,
-      reasoning: reorderReasoning,
-      triggerType,
-      strategyUsed: 'rule-based'
-    });
+    // Save to DB
+    if (suggestionType === 'pricing' || suggestionType === 'both') {
+      PricingSuggestionModel.create({
+        productId: product.id,
+        currentPrice: product.current_price,
+        suggestedPrice,
+        changeDirection,
+        confidence: 0.8,
+        reasoning: priceReasoning,
+        triggerReason,
+        strategyUsed: 'rule-based'
+      });
+    }
+
+    if (suggestionType === 'reorder' || suggestionType === 'both') {
+      ReorderSuggestionModel.create({
+        productId: product.id,
+        currentStock: product.stock_level,
+        suggestedQuantity,
+        suggestedLeadTimeDays: 7, // rule-based fallback
+        confidence: 0.8,
+        reasoning: reorderReasoning,
+        triggerReason,
+        strategyUsed: 'rule-based'
+      });
+    }
   }
 }
 
 class AIStrategy extends PricingStrategy {
   constructor() {
     super();
-    this.advisor = new AIAdvisor(process.env.GROQ_API_KEY, process.env.LLM_MODEL);
+    this.advisor = new AIAdvisor();
     this.fallbackStrategy = new RuleBasedStrategy();
   }
 
-  async execute(product, triggerType) {
-    const aiResult = await this.advisor.generateSuggestions({ product, triggerType });
-    
-    if (!aiResult) {
-      console.warn(`[AI Strategy] Failed for ${product.id}. Falling back to Rule-Based.`);
-      return this.fallbackStrategy.execute(product, triggerType);
+  async execute(product, triggerReason, suggestionType = 'both') {
+    try {
+      const categoryAvgVelocity = ProductModel.getCategoryAvgVelocity(product.category);
+      
+      const aiResult = await this.advisor.generateSuggestions({ 
+        product, 
+        triggerReason,
+        categoryAvgVelocity
+      });
+      
+      if (!aiResult) {
+        throw new Error("AI returned empty result");
+      }
+
+      if (suggestionType === 'pricing' || suggestionType === 'both') {
+        PricingSuggestionModel.create({
+          productId: product.id,
+          currentPrice: product.current_price,
+          suggestedPrice: aiResult.suggestedPrice,
+          changeDirection: aiResult.changeDirection,
+          confidence: aiResult.priceConfidence,
+          reasoning: aiResult.priceReasoning,
+          triggerReason,
+          strategyUsed: 'ai'
+        });
+      }
+
+      if (suggestionType === 'reorder' || suggestionType === 'both') {
+        ReorderSuggestionModel.create({
+          productId: product.id,
+          currentStock: product.stock_level,
+          suggestedQuantity: aiResult.suggestedQuantity,
+          suggestedLeadTimeDays: aiResult.suggestedLeadTimeDays,
+          confidence: aiResult.reorderConfidence,
+          reasoning: aiResult.reorderReasoning,
+          triggerReason,
+          strategyUsed: 'ai'
+        });
+      }
+    } catch (err) {
+      console.warn(`[AI Strategy] Failed for ${product.id} (${err.message}). Falling back to Rule-Based.`);
+      return this.fallbackStrategy.execute(product, triggerReason, suggestionType);
     }
-
-    PricingSuggestionModel.create({
-      productId: product.id,
-      currentPrice: product.current_price,
-      suggestedPrice: aiResult.suggestedPrice,
-      confidence: aiResult.priceConfidence,
-      reasoning: aiResult.priceReasoning,
-      triggerType,
-      strategyUsed: 'ai'
-    });
-
-    ReorderSuggestionModel.create({
-      productId: product.id,
-      currentStock: product.stock_level,
-      suggestedQuantity: aiResult.suggestedQuantity,
-      confidence: aiResult.reorderConfidence,
-      reasoning: aiResult.reorderReasoning,
-      triggerType,
-      strategyUsed: 'ai'
-    });
   }
 }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getProducts, getSuggestions, acceptPricing, rejectPricing, acceptReorder, rejectReorder, simulateOrder } from '../api';
+import { getProducts, getSuggestions, resolvePricing, resolveReorder, simulateOrder } from '../api';
 import ProductList from './ProductList';
 import SuggestionList from './SuggestionList';
 import './Dashboard.css';
@@ -39,13 +39,12 @@ export default function Dashboard() {
   };
 
   const handleResolve = async (type, id, action) => {
+    // action is passed from SuggestionCard: 'ACCEPTED' or 'REJECTED'
     try {
       if (type === 'pricing') {
-        if (action === 'accept') await acceptPricing(id);
-        else await rejectPricing(id);
+        await resolvePricing(id, action);
       } else {
-        if (action === 'accept') await acceptReorder(id);
-        else await rejectReorder(id);
+        await resolveReorder(id, action);
       }
       await fetchData();
     } catch (err) {

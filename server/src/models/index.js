@@ -1,5 +1,4 @@
 // In-memory data store for Hackathon Demo
-// Replaces SQLite to avoid C++ build tool requirements on Node v24
 
 const db = {
   products: [
@@ -12,11 +11,23 @@ const db = {
     { id: 'PRD-007', sku: 'SKU-ELEC-003', name: 'Portable Charger 20K', category: 'ELECTRONICS', current_price: 44.99, stock_level: 18, reorder_threshold: 25, demand_velocity: 8, status: 'ACTIVE' },
     { id: 'PRD-008', sku: 'SKU-APP-003', name: 'Hoodie — Heather Grey', category: 'APPAREL', current_price: 54.99, stock_level: 11, reorder_threshold: 12, demand_velocity: 15, status: 'ACTIVE' }
   ],
-  snapshots: [],
   pricing_suggestions: [],
   reorder_suggestions: [],
   
-  _nextIds: { snapshots: 1, pricing: 1, reorder: 1 }
+  _nextIds: { pricing: 1, reorder: 1 }
+};
+
+// Helper to calculate category averages for the AI context
+const getCategoryAverages = () => {
+  const avgs = {};
+  const counts = {};
+  db.products.forEach(p => {
+    if (!avgs[p.category]) { avgs[p.category] = 0; counts[p.category] = 0; }
+    avgs[p.category] += p.demand_velocity;
+    counts[p.category]++;
+  });
+  Object.keys(avgs).forEach(k => avgs[k] = avgs[k] / counts[k]);
+  return avgs;
 };
 
 // Helper to enrich suggestion with product data
@@ -33,15 +44,39 @@ const enrichSuggestion = (s) => {
 };
 
 const ProductModel = {
-  findAll: () => [...db.products].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)),
+  findAll: (category = null, status = null) => {
+    let res = [...db.products];
+    if (category) res = res.filter(p => p.category === category);
+    if (status) res = res.filter(p => p.status === status);
+    return res.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+  },
   
   findById: (id) => db.products.find(p => p.id === id),
+
+  create: (data) => {
+    const id = `PRD-${Date.now()}`;
+    const p = {
+      id,
+      sku: data.sku,
+      name: data.name,
+      category: data.category,
+      current_price: data.current_price,
+      stock_level: data.stock_level || 0,
+      reorder_threshold: data.reorder_threshold || 10,
+      demand_velocity: 0,
+      status: data.stock_level <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE'
+    };
+    db.products.push(p);
+    return p;
+  },
   
   updateStock: (id, newStock) => {
     const p = db.products.find(p => p.id === id);
     if (p) {
       p.stock_level = newStock;
-      p.status = newStock <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE';
+      if (p.status !== 'PRICE_REVIEW_PENDING') {
+        p.status = newStock <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE';
+      }
     }
     return p;
   },
@@ -50,7 +85,7 @@ const ProductModel = {
     const p = db.products.find(p => p.id === id);
     if (p) {
       p.current_price = newPrice;
-      p.status = 'ACTIVE';
+      p.status = p.stock_level <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE';
     }
     return p;
   },
@@ -72,47 +107,25 @@ const ProductModel = {
       p.status = p.stock_level > 0 ? 'ACTIVE' : 'OUT_OF_STOCK';
     }
     return p;
-  }
-};
-
-const SnapshotModel = {
-  create: (productId, stockLevel, demandVelocity, triggerType = null) => {
-    const snap = {
-      id: db._nextIds.snapshots++,
-      product_id: productId,
-      stock_level: stockLevel,
-      demand_velocity: demandVelocity,
-      trigger_type: triggerType,
-      created_at: new Date().toISOString()
-    };
-    db.snapshots.push(snap);
-    return snap;
   },
-  
-  findByProduct: (productId, limit = 20) => {
-    return db.snapshots
-      .filter(s => s.product_id === productId)
-      .sort((a, b) => b.id - a.id)
-      .slice(0, limit);
-  }
+
+  getCategoryAvgVelocity: (category) => getCategoryAverages()[category] || 0
 };
 
 const PricingSuggestionModel = {
-  create: ({ productId, currentPrice, suggestedPrice, confidence, reasoning, triggerType, strategyUsed }) => {
-    const changePct = parseFloat(((suggestedPrice - currentPrice) / currentPrice * 100).toFixed(2));
+  create: ({ productId, currentPrice, suggestedPrice, changeDirection, confidence, reasoning, triggerReason, strategyUsed }) => {
     const sug = {
       id: db._nextIds.pricing++,
       product_id: productId,
       current_price: currentPrice,
       suggested_price: suggestedPrice,
-      price_change_pct: changePct,
+      change_direction: changeDirection,
       confidence,
       reasoning,
-      trigger_type: triggerType,
+      triggerReason,
       strategy_used: strategyUsed,
       status: 'PENDING',
-      created_at: new Date().toISOString(),
-      resolved_at: null
+      created_at: new Date().toISOString()
     };
     db.pricing_suggestions.push(sug);
     return enrichSuggestion(sug);
@@ -136,7 +149,6 @@ const PricingSuggestionModel = {
     if (!s || s.status !== 'PENDING') return null;
     
     s.status = 'ACCEPTED';
-    s.resolved_at = new Date().toISOString();
     ProductModel.updatePrice(s.product_id, s.suggested_price);
     return enrichSuggestion(s);
   },
@@ -146,8 +158,7 @@ const PricingSuggestionModel = {
     if (!s || s.status !== 'PENDING') return null;
     
     s.status = 'REJECTED';
-    s.resolved_at = new Date().toISOString();
-    ProductModel.updateStatus(s.product_id, 'ACTIVE');
+    ProductModel.updateStatus(s.product_id, 'ACTIVE'); // release lock
     return enrichSuggestion(s);
   },
   
@@ -157,19 +168,19 @@ const PricingSuggestionModel = {
 };
 
 const ReorderSuggestionModel = {
-  create: ({ productId, currentStock, suggestedQuantity, confidence, reasoning, triggerType, strategyUsed }) => {
+  create: ({ productId, currentStock, suggestedQuantity, suggestedLeadTimeDays, confidence, reasoning, triggerReason, strategyUsed }) => {
     const sug = {
       id: db._nextIds.reorder++,
       product_id: productId,
       current_stock: currentStock,
       suggested_quantity: suggestedQuantity,
+      suggested_lead_time_days: suggestedLeadTimeDays,
       confidence,
       reasoning,
-      trigger_type: triggerType,
+      triggerReason,
       strategy_used: strategyUsed,
       status: 'PENDING',
-      created_at: new Date().toISOString(),
-      resolved_at: null
+      created_at: new Date().toISOString()
     };
     db.reorder_suggestions.push(sug);
     return enrichSuggestion(sug);
@@ -193,7 +204,7 @@ const ReorderSuggestionModel = {
     if (!s || s.status !== 'PENDING') return null;
     
     s.status = 'ACCEPTED';
-    s.resolved_at = new Date().toISOString();
+    // Simulate inbound shipment
     ProductModel.restockProduct(s.product_id, s.suggested_quantity);
     return enrichSuggestion(s);
   },
@@ -203,7 +214,6 @@ const ReorderSuggestionModel = {
     if (!s || s.status !== 'PENDING') return null;
     
     s.status = 'REJECTED';
-    s.resolved_at = new Date().toISOString();
     return enrichSuggestion(s);
   },
   
@@ -214,7 +224,6 @@ const ReorderSuggestionModel = {
 
 module.exports = {
   ProductModel,
-  SnapshotModel,
   PricingSuggestionModel,
   ReorderSuggestionModel
 };
