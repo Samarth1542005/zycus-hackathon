@@ -3,6 +3,45 @@ const { PricingSuggestionModel, ReorderSuggestionModel } = require('../models');
 
 const pricingRouter = express.Router();
 const reorderRouter = express.Router();
+const suggestionsRouter = express.Router();
+
+function findSuggestions(status = null) {
+  return [
+    ...PricingSuggestionModel.findAll(status),
+    ...ReorderSuggestionModel.findAll(status)
+  ].sort((left, right) => right.id - left.id);
+}
+
+suggestionsRouter.get('/', (req, res) => {
+  res.json(findSuggestions(req.query.status || null));
+});
+
+suggestionsRouter.get('/pending', (req, res) => {
+  res.json(findSuggestions('PENDING'));
+});
+
+suggestionsRouter.patch('/:type/:id/accept', (req, res) => {
+  resolveUnifiedSuggestion(req, res, 'ACCEPTED');
+});
+
+suggestionsRouter.patch('/:type/:id/reject', (req, res) => {
+  resolveUnifiedSuggestion(req, res, 'REJECTED');
+});
+
+function resolveUnifiedSuggestion(req, res, status) {
+  const models = req.params.type === 'pricing'
+    ? PricingSuggestionModel
+    : req.params.type === 'reorder'
+      ? ReorderSuggestionModel
+      : null;
+  if (!models) return res.status(400).json({ error: 'type must be pricing or reorder' });
+
+  const result = status === 'ACCEPTED'
+    ? models.accept(req.params.id)
+    : models.reject(req.params.id);
+  if (!result) return res.status(400).json({ error: 'Invalid suggestion or status' });
+  res.json(result);
+}
 
 // ─── PRICING SUGGESTIONS ────────────────────────────────────────
 
@@ -54,4 +93,4 @@ reorderRouter.patch('/:id', (req, res) => {
   }
 });
 
-module.exports = { pricingRouter, reorderRouter };
+module.exports = { pricingRouter, reorderRouter, suggestionsRouter };

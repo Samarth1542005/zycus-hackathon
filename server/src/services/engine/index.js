@@ -22,13 +22,14 @@ class CommerceEngine {
     return this.currentStrategy;
   }
 
-  async processTrigger(product, triggerType) {
+  async processTrigger(product, triggerType, suggestionType = 'both') {
     console.log(`[CommerceEngine] Processing ${triggerType} for product ${product.sku} using ${this.currentStrategy} strategy`);
     const strategy = this.strategies[this.currentStrategy];
     
     // Execute asynchronously (fire and forget) so it doesn't block the request
-    strategy.execute(product, triggerType).catch(err => {
+    return strategy.execute(product, triggerType, suggestionType).catch(err => {
       console.error(`[CommerceEngine] Error executing strategy:`, err);
+      throw err;
     });
   }
 }

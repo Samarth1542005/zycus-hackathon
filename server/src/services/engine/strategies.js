@@ -31,6 +31,13 @@ class RuleBasedStrategy extends PricingStrategy {
       priceReasoning = 'Rule: No significant triggers, maintaining price.';
     }
 
+    const minimumPrice = product.cost_price / (1 - product.margin_floor);
+    if (suggestedPrice < minimumPrice) {
+      suggestedPrice = +minimumPrice.toFixed(2);
+      changeDirection = suggestedPrice > product.current_price ? 'INCREASE' : 'HOLD';
+      priceReasoning += ' Margin floor guardrail applied.';
+    }
+
     // T-2 Reorder Rule: (threshold * 3) - current stock, minimum 1
     const calcQty = (product.reorder_threshold * 3) - product.stock_level;
     suggestedQuantity = Math.max(1, calcQty);

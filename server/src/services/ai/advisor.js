@@ -2,14 +2,13 @@ const llmGateway = require('./llmGateway');
 
 class AIAdvisor {
   constructor() {
-    this.provider = process.env.LLM_PROVIDER || 'groq';
-    this.apiKey = process.env.GROQ_API_KEY; 
-    this.model = process.env.LLM_MODEL || 'llama3-8b-8192'; // Using llama3 on Groq as default
+    this.apiKey = process.env.GROQ_API_KEY;
+    this.model = process.env.LLM_MODEL || 'openai/gpt-oss-20b';
   }
 
   async generateSuggestions(context) {
-    if (!this.apiKey && this.provider === 'groq') {
-      console.warn("No GROQ_API_KEY found, failing AI call intentionally to trigger fallback.");
+    if (!this.apiKey) {
+      console.warn('No GROQ_API_KEY found, failing AI call intentionally to trigger fallback.');
       return null;
     }
 
@@ -24,6 +23,7 @@ class AIAdvisor {
       Product: ${product.name} (SKU: ${product.sku})
       Category: ${product.category}
       Current Price: $${product.current_price}
+      Cost Price: $${product.cost_price} (Margin Floor: ${(product.margin_floor * 100).toFixed(0)}%)
       Stock Level: ${product.stock_level} (Reorder Threshold: ${product.reorder_threshold})
       Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
 
@@ -47,6 +47,7 @@ class AIAdvisor {
       Product: ${product.name} (SKU: ${product.sku})
       Category: ${product.category}
       Current Price: $${product.current_price}
+      Cost Price: $${product.cost_price} (Margin Floor: ${(product.margin_floor * 100).toFixed(0)}%)
       Stock Level: ${product.stock_level} (Reorder Threshold: ${product.reorder_threshold})
       Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
 
@@ -69,6 +70,7 @@ class AIAdvisor {
       Product: ${product.name} (SKU: ${product.sku})
       Category: ${product.category}
       Current Price: $${product.current_price}
+      Cost Price: $${product.cost_price} (Margin Floor: ${(product.margin_floor * 100).toFixed(0)}%)
       Stock Level: ${product.stock_level}
       Demand Velocity: ${product.demand_velocity} orders/day (Category Average: ${categoryAvgVelocity})
       
@@ -87,18 +89,26 @@ class AIAdvisor {
     }
 
     try {
-      const responseText = await llmGateway.callLLM(prompt, this.provider, this.apiKey, this.model);
-      const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const result = JSON.parse(cleaned);
+      const result = await llmGateway.callLLM(prompt, {
+        apiKey: this.apiKey,
+        model: this.model
+      });
 
-      // Validation Step
-      if (typeof result.suggestedPrice !== 'number' || result.suggestedPrice <= 0) throw new Error("Invalid price");
+      if (!Number.isFinite(result.suggestedPrice) || result.suggestedPrice <= 0) throw new Error("Invalid price");
       if (result.suggestedPrice > product.current_price * 2 || result.suggestedPrice < product.current_price * 0.5) {
         throw new Error("Price out of sane bounds (0.5x - 2.0x)");
       }
-      
+      const minimumPrice = product.cost_price / (1 - product.margin_floor);
+      if (result.suggestedPrice < minimumPrice) throw new Error("Price violates margin floor");
+
       if (!Number.isInteger(result.suggestedQuantity) || result.suggestedQuantity <= 0) throw new Error("Invalid quantity");
       if (!Number.isInteger(result.suggestedLeadTimeDays) || result.suggestedLeadTimeDays <= 0) throw new Error("Invalid lead time");
+      if (!isConfidenceScore(result.priceConfidence) || !isConfidenceScore(result.reorderConfidence)) {
+        throw new Error("Invalid confidence score");
+      }
+      if (!['INCREASE', 'DECREASE', 'HOLD'].includes(result.changeDirection)) throw new Error("Invalid change direction");
+      if (typeof result.priceReasoning !== 'string' || !result.priceReasoning.trim()) throw new Error("Invalid price reasoning");
+      if (typeof result.reorderReasoning !== 'string' || !result.reorderReasoning.trim()) throw new Error("Invalid reorder reasoning");
 
       return result;
     } catch (e) {
@@ -106,6 +116,10 @@ class AIAdvisor {
       return null; // Return null to trigger Rule-Based fallback
     }
   }
+}
+
+function isConfidenceScore(value) {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 module.exports = { AIAdvisor };

@@ -6,18 +6,18 @@
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-async function callLLM(prompt, { apiKey, model = 'llama-3.1-70b-versatile' } = {}) {
+async function callLLM(prompt, { apiKey, model = 'openai/gpt-oss-20b', timeoutMs = 15000 } = {}) {
   if (!apiKey) {
     throw new Error('GROQ_API_KEY is not set. Add it to your .env file.');
   }
 
-  const response = await fetch(GROQ_API_URL, {
-    method: 'POST',
+  const request = {
+    url: GROQ_API_URL,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
+    body: {
       model,
       messages: [
         {
@@ -32,8 +32,32 @@ async function callLLM(prompt, { apiKey, model = 'llama-3.1-70b-versatile' } = {
       temperature: 0.3,
       max_tokens: 1024,
       response_format: { type: 'json_object' }
-    })
-  });
+    }
+  };
+
+  let response;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      response = await fetch(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error(`Groq API request timed out after ${timeoutMs}ms`);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const isTransient = [429, 500, 502, 503, 504].includes(response.status);
+    if (response.ok || !isTransient || attempt === 1) break;
+    await new Promise(resolve => setTimeout(resolve, 750));
+  }
 
   if (!response.ok) {
     const errText = await response.text();
