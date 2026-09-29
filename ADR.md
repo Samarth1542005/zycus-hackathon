@@ -14,17 +14,18 @@
 **Date**: 2026-09-28  
 **Status**: Accepted  
 **Context**: The brief requested H2 (or SQLite equivalent) to persist data without heavy setup. During implementation, `better-sqlite3` failed to compile native C++ extensions on Windows with Node v24 due to missing Visual Studio Build Tools.
-**Decision**: Built a custom **in-memory data store** with full relational models, state management, and schema-like behavior entirely in JavaScript arrays instead of fighting C++ compilation chains.
+**Decision**: Built a file-backed local data store with full relational models, state management, and schema-like behavior in JavaScript arrays serialized to `server/stockpulse.data.json` instead of fighting C++ compilation chains. The file is ignored by Git and a demo reset endpoint restores seed data.
 **Consequences**:
 - (+) Zero-dependency setup, ensuring the demo works flawlessly on any machine during the presentation.
-- (-) Data is lost on server restart (acceptable for a hackathon demo).
-- The `models/index.js` acts exactly like an ORM, making a future swap to Postgres trivial.
+- (+) Products and suggestions survive a backend restart.
+- (-) JSON files do not provide relational transactions or multi-process concurrency.
+- The `models/index.js` acts exactly like an ORM, making a future swap to SQLite/Postgres straightforward.
 
-## 3. Groq (Llama-3.1-70b) vs Gemini
+## 3. Groq LLM Provider
 **Date**: 2026-09-28  
 **Status**: Accepted  
-**Context**: The AI Advisor needed an LLM provider. The brief offered a choice between Gemini, Groq, or Ollama.
-**Decision**: Selected **Groq (llama-3.1-70b-versatile)**.
+**Context**: The AI Advisor needed a fast LLM provider with structured JSON output for pricing and reorder recommendations.
+**Decision**: Selected **Groq (openai/gpt-oss-20b)** for low-latency recommendation generation.
 **Consequences**:
 - (+) Groq provides the fastest inference on the market. In a live demo showing an "agentic loop," the time between triggering a stock drop and seeing the AI suggestions is critical. Groq's sub-second response times make the app feel incredibly snappy and "reactive."
 - (+) Full support for JSON mode ensures deterministic API responses.
@@ -46,3 +47,26 @@
 **Consequences**:
 - (+) Real-time responsiveness.
 - (+) Highly scalable pattern (can easily be moved to a Pub/Sub queue for production).
+
+## 6. Unified Recommendation Contract
+**Date**: 2026-09-28
+**Status**: Accepted
+**Context**: Pricing and replenishment are separate approval actions, but an inventory event needs both recommendations and both HTTP and async callers must use the same strategy contract.
+**Options**: Make separate pricing and reorder strategy calls, or make one advisor call return a combined recommendation payload.
+**Decision**: Use one `execute(product, triggerReason, suggestionType)` strategy contract. The AI prompt returns both outputs in one structured response, while the engine can persist either type for manual endpoints.
+**Tradeoffs**: One malformed AI response can affect both outputs, so the rule strategy is the all-or-nothing fallback. The unified call reduces latency and keeps pricing/reorder decisions in the same merchandising context.
+
+## 7. AI Resilience and Human Checkpoint
+**Date**: 2026-09-28
+**Status**: Accepted
+**Context**: LLMs can time out, return malformed JSON, exceed business bounds, or be temporarily unavailable. Prices must never change merely because an AI response arrived.
+**Options**: Fail the async job, retry indefinitely, or validate with bounded retry and fall back to deterministic rules.
+**Decision**: The gateway applies a timeout and one transient-error retry. The advisor validates price range, quantity, lead time, confidence, direction, and reasoning. Invalid or unavailable AI responses use the rule strategy. Suggestions remain `PENDING` until a merchandiser accepts them.
+**Tradeoffs**: Rule fallback is less nuanced than AI, but it guarantees a visible recommendation and preserves the approval checkpoint.
+
+## 8. Extensibility and Deliberate Exclusions
+**Date**: 2026-09-28
+**Status**: Accepted
+**Context**: Competitor pricing, margin floors, supplier catalogs, durable persistence, and streamed reasoning are valuable follow-on capabilities but exceed the focused demo scope.
+**Decision**: Keep extension points at the strategy interface, AI context object, inventory snapshot model, and unified suggestion routes. A future `CompetitorAwareStrategy` can register beside the existing strategies without changing triggers or UI contracts.
+**Tradeoffs**: The current demo uses an in-memory model and polling rather than SQLite and SSE. This keeps setup under five minutes and the agentic loop observable, but restart persistence and streaming remain sprint-two work.

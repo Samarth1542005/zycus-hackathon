@@ -1,6 +1,7 @@
 node_modules/
 .env
 stockpulse.db
+server/stockpulse.data.json
 dist/
 .DS_Store
 *.log

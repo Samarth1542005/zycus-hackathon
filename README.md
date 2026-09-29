@@ -37,9 +37,11 @@ npm run dev                    # Runs on :5173
 ## Environment Variables
 
 ```env
+LLM_PROVIDER=groq
 GROQ_API_KEY=your_groq_api_key_here
 PORT=3001
 STRATEGY=ai                   # "ai" or "rule-based"
+LLM_MODEL=openai/gpt-oss-20b
 ```
 
 ## Demo Scenarios

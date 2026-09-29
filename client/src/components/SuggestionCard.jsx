@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function SuggestionCard({ type, suggestion, onResolve }) {
+export default function SuggestionCard({ type, suggestion, onResolve, busy = false }) {
   const isPricing = type === 'pricing';
   
   const getBadgeClass = (trigger) => {
@@ -13,9 +13,9 @@ export default function SuggestionCard({ type, suggestion, onResolve }) {
 
   const getTriggerText = (trigger) => {
     switch(trigger) {
-      case 'INVENTORY_LOW': return '📉 Low Stock Trigger';
-      case 'DEMAND_SPIKE': return '🔥 Demand Spike Trigger';
-      default: return '👤 Manual Review';
+      case 'INVENTORY_LOW': return 'Low stock trigger';
+      case 'DEMAND_SPIKE': return 'Demand spike trigger';
+      default: return 'Manual review';
     }
   };
 
@@ -24,14 +24,14 @@ export default function SuggestionCard({ type, suggestion, onResolve }) {
       <div className="card-header">
         <div className="card-title">
           <h4>{suggestion.product_name}</h4>
-          <span className="sku">{suggestion.sku}</span>
+          <span className="sku"><span className="sku-dot" />{suggestion.sku}</span>
         </div>
         <div className="card-badges">
           <span className={`badge ${getBadgeClass(suggestion.triggerReason)}`}>
             {getTriggerText(suggestion.triggerReason)}
           </span>
           <span className={`badge strategy-${suggestion.strategy_used}`}>
-            {suggestion.strategy_used === 'ai' ? '🤖 AI' : '⚙️ Rule'}
+            {suggestion.strategy_used === 'ai' ? 'AI recommendation' : 'Rule recommendation'}
           </span>
         </div>
       </div>
@@ -83,15 +83,17 @@ export default function SuggestionCard({ type, suggestion, onResolve }) {
       <div className="card-actions">
         <button 
           className="btn btn-reject"
+          disabled={busy}
           onClick={() => onResolve(type, suggestion.id, 'REJECTED')}
         >
-          ✕ Reject
+          {busy ? 'Saving...' : 'Reject'}
         </button>
         <button 
           className="btn btn-accept"
+          disabled={busy}
           onClick={() => onResolve(type, suggestion.id, 'ACCEPTED')}
         >
-          ✓ Accept
+          {busy ? 'Saving...' : 'Accept'}
         </button>
       </div>
     </div>
