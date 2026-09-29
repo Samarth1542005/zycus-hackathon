@@ -225,6 +225,30 @@ npm.cmd run build
 npm.cmd run lint
 ```
 
+## Deploying to Render and Vercel
+
+The repository includes [render.yaml](render.yaml) for the Express API.
+
+### Backend on Render
+
+1. Create a new Render Blueprint from this repository.
+2. Render will detect `render.yaml` and create `stockpulse-api`.
+3. Add `GROQ_API_KEY` as a secret in the Render service settings.
+4. Set `CLIENT_ORIGIN` to the final Vercel URL, for example `https://stockpulse.vercel.app`.
+5. Confirm `GET /api/health` returns `{ "status": "OK" }`.
+
+The local JSON store is durable on a development machine, but Render's default filesystem is ephemeral. Use a persistent disk or external database before treating the deployed store as production data.
+
+### Frontend on Vercel
+
+1. Import the same repository into Vercel.
+2. Set the project root directory to `client`.
+3. Add the environment variable `VITE_API_BASE` with the Render API URL ending in `/api`.
+4. Use Vite's detected build settings, or set the build command to `npm run build`.
+5. Open the generated Vercel URL and trigger a demo order.
+
+The client environment template is available at `client/.env.example`.
+
 ## Repository Guide
 
 - [PROJECT_BRIEF.md](PROJECT_BRIEF.md) - problem statement and intended scope

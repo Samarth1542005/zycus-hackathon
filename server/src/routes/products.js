@@ -6,6 +6,9 @@ const engine = require('../services/engine');
 const router = express.Router();
 
 router.post('/demo/reset', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Demo reset is disabled in production' });
+  }
   resetState();
   res.json({ message: 'Demo state reset successfully' });
 });
