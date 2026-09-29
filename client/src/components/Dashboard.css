@@ -494,7 +494,7 @@
 /* Editorial console theme */
 .header {
   margin-bottom: 0;
-  padding: 2.3rem 0 1.8rem;
+  padding: 1.65rem 0 1.25rem;
   background: transparent;
   border: none;
   border-radius: 0;
@@ -502,8 +502,7 @@
 }
 
 .header h1 {
-  font-size: clamp(2.4rem, 5vw, 4.6rem);
-  font-weight: 400;
+  font-size: clamp(2rem, 4vw, 3.65rem);
   line-height: 0.93;
 }
 
@@ -527,8 +526,8 @@
   letter-spacing: 0.04em;
 }
 
-.console-nav > span { padding: 1rem 0 0.85rem; }
-.console-nav .active { color: var(--accent-orange); border-bottom: 2px solid var(--accent-orange); }
+.console-nav a { padding: 1rem 0 0.85rem; color: inherit; text-decoration: none; }
+.console-nav a.active { color: var(--accent-orange); border-bottom: 2px solid var(--accent-orange); }
 .console-nav .nav-live { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; color: var(--accent-green); }
 .console-nav .nav-live .live-dot { flex: 0 0 0.45rem; width: 0.45rem; height: 0.45rem; padding: 0; }
 

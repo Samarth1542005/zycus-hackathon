@@ -74,7 +74,7 @@ export default function Dashboard() {
   if (loading) return <div className="loading">Loading ShopStream Dashboard...</div>;
 
   return (
-    <div className="dashboard">
+    <div className="dashboard" id="top">
       <header className="header">
         <div className="brand-lockup">
           <div>
@@ -89,10 +89,10 @@ export default function Dashboard() {
       </header>
 
       <nav className="console-nav" aria-label="Console sections">
-        <span className="active">Dashboard</span>
-        <span>Approvals</span>
-        <span>Inventory</span>
-        <span>Activity</span>
+        <a className="active" href="#top">Dashboard</a>
+        <a href="#approvals">Approvals</a>
+        <a href="#inventory">Inventory</a>
+        <a href="#approvals">Activity</a>
         <span className="nav-live"><span className="live-dot" /> Live monitoring</span>
       </nav>
 
